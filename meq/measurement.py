@@ -159,7 +159,9 @@ def _result(agent: str, session_id: str, per_model: dict, *, subagents: int = 0,
     models = {
         model: _external_slot(slot) for model, slot in sorted(per_model.items())
     }
-    total = round(sum(item["meq"] for item in models.values()), 3)
+    # Round once at the public total boundary. Summing the already rounded model values
+    # loses real usage when several small model slots each fall below half a milli-Meq.
+    total = round(sum(_meq(slot) for slot in per_model.values()), 3)
     return {
         "agent": agent,
         "session": session_id,
@@ -250,21 +252,32 @@ def combine(measures: Sequence[dict]) -> dict:
     if not measures:
         raise MeasurementError("no sessions to measure")
     per_model = defaultdict(
-        lambda: {"meq": 0.0, "calls": 0, **{name: 0 for name in TOKEN_FIELDS.values()}}
+        lambda: {"calls": 0, **{name: 0 for name in TOKEN_FIELDS.values()}}
     )
     for measurement in measures:
         for model, slot in measurement["modellen"].items():
             for field in per_model[model]:
                 per_model[model][field] += slot.get(field, 0)
     models = {
-        model: {**slot, "meq": round(slot["meq"], 3)}
+        model: {
+            "meq": round(
+                sum(slot[TOKEN_FIELDS[key]] * weight for key, weight in WEIGHTS.items())
+                / 1e6,
+                3,
+            ),
+            **slot,
+        }
         for model, slot in sorted(per_model.items())
     }
+    raw_total = sum(
+        sum(slot[TOKEN_FIELDS[key]] * weight for key, weight in WEIGHTS.items()) / 1e6
+        for slot in per_model.values()
+    )
     return {
         "session": measures[0]["session"],
         "sessions": [item["session"] for item in measures],
         "agents": sorted({item["agent"] for item in measures}),
-        "meq": round(sum(item["meq"] for item in measures), 3),
+        "meq": round(raw_total, 3),
         "meq_hoofdsessie": round(sum(item["meq_hoofdsessie"] for item in measures), 3),
         "meq_subagents": round(sum(item["meq_subagents"] for item in measures), 3),
         "subagents": sum(item["subagents"] for item in measures),
