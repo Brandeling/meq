@@ -63,6 +63,21 @@ class MeasurementContractTests(unittest.TestCase):
         })
         self.assertEqual(result["modellen_kort"], "gpt-5.6-terra 0,003")
 
+    def test_total_is_rounded_after_raw_model_values_are_summed(self):
+        session = "44444444-4444-4444-4444-444444444444"
+        transcript = self.claude / "-tmp-project" / f"{session}.jsonl"
+        transcript.write_text(
+            '{"message":{"model":"claude-opus-5","usage":{"input_tokens":490}}}\n'
+            '{"message":{"model":"claude-sonnet-5","usage":{"input_tokens":490}}}\n'
+        )
+
+        result = measure_session(session, store=self.store)
+
+        self.assertEqual(result["modellen"]["claude-opus-5"]["meq"], 0.0)
+        self.assertEqual(result["modellen"]["claude-sonnet-5"]["meq"], 0.0)
+        self.assertEqual(result["meq"], 0.001)
+        self.assertEqual(result["meq_hoofdsessie"], 0.001)
+
     def test_global_lookup_rejects_duplicate_session_ids(self):
         duplicate = self.claude / "-other" / f"{CLAUDE_SID}.jsonl"
         duplicate.parent.mkdir()

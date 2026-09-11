@@ -29,6 +29,9 @@ Important properties:
 
 - `propose` never invokes a sink.
 - The approval id covers the session id and exact allocation fractions.
+- Allocations contain at least one unique, non-empty, single-line reference. Fractions are
+  finite, non-negative normalized decimals and total 1.0, with an inclusive 0.001 margin
+  for human-entered percentages (0.999 through 1.001).
 - `apply` rejects a changed or incorrectly approved proposal before invoking any sink.
 - The measurement is made at apply time, so the approval conversation is included.
 - Idempotence belongs to the sink. A useful key is `(session, approval_id, reference)`.

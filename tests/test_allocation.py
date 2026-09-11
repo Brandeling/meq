@@ -1,4 +1,5 @@
 import json
+import hashlib
 import os
 import subprocess
 import sys
@@ -7,7 +8,16 @@ import unittest
 from decimal import Decimal
 from pathlib import Path
 
-from meq.allocation import AllocationError, Proposal, parse_allocations
+from meq.allocation import Allocation, AllocationError, Proposal, parse_allocations
+
+
+def approval_id(session, allocations):
+    canonical = json.dumps(
+        {"session": session, "allocations": allocations},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
 
 class AllocationTests(unittest.TestCase):
@@ -25,6 +35,41 @@ class AllocationTests(unittest.TestCase):
     def test_duplicate_reference_is_rejected(self):
         with self.assertRaisesRegex(AllocationError, "more than once"):
             parse_allocations(["ISSUE-1=50", "ISSUE-1=50"])
+
+    def test_python_api_rejects_incomplete_or_unsafe_allocations(self):
+        invalid = (
+            (Allocation("ISSUE-1", Decimal("0.5")),),
+            (
+                Allocation("ISSUE-1", Decimal("0.5")),
+                Allocation("ISSUE-1", Decimal("0.5")),
+            ),
+            (
+                Allocation("ISSUE-1", Decimal("1.1")),
+                Allocation("ISSUE-2", Decimal("-0.1")),
+            ),
+            (Allocation(" bad-reference", Decimal("1")),),
+            (Allocation("ISSUE-1\nISSUE-2", Decimal("1")),),
+            (Allocation("ISSUE-1", Decimal("NaN")),),
+        )
+        for allocations in invalid:
+            with self.subTest(allocations=allocations):
+                with self.assertRaises(AllocationError):
+                    Proposal.create("session", allocations)
+
+    def test_validly_hashed_incomplete_proposal_is_still_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "proposal.json"
+            allocations = [{"reference": "ISSUE-1", "fraction": 0.5}]
+            path.write_text(json.dumps({
+                "schema": "meq-proposal-v1",
+                "session": "session",
+                "allocations": allocations,
+                "approval_id": approval_id("session", allocations),
+                "created_at": "2026-09-12T00:00:00+00:00",
+            }))
+
+            with self.assertRaisesRegex(AllocationError, "expected 100%"):
+                Proposal.read(path)
 
     def test_tampered_proposal_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -96,6 +141,26 @@ class ApprovalRoundTests(unittest.TestCase):
         payload = json.loads(self.sink_log.read_text())
         self.assertEqual(payload["schema"], "meq-sink-v1")
         self.assertEqual(payload["measurement"]["session"], self.sid)
+
+    def test_apply_never_calls_sink_for_validly_hashed_invalid_payload(self):
+        allocations = [{"reference": "ISSUE-1", "fraction": 0.5}]
+        self.proposal.write_text(json.dumps({
+            "schema": "meq-proposal-v1",
+            "session": self.sid,
+            "allocations": allocations,
+            "approval_id": approval_id(self.sid, allocations),
+            "created_at": "2026-09-12T00:00:00+00:00",
+        }))
+
+        applied = self.run_meq(
+            "apply", str(self.proposal),
+            "--approve", approval_id(self.sid, allocations),
+            "--sink", str(self.sink),
+        )
+
+        self.assertNotEqual(applied.returncode, 0)
+        self.assertIn("expected 100%", applied.stderr)
+        self.assertFalse(self.sink_log.exists())
 
 
 if __name__ == "__main__":

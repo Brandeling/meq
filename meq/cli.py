@@ -103,6 +103,7 @@ def _run_modern(arguments: list[str], store: TranscriptStore) -> None:
         print("No sink was called.")
         return
     proposal = Proposal.read(args.proposal)
+    proposal.validate()
     if args.approve != proposal.approval_id:
         raise AllocationError("approval id does not match this proposal")
     payload = {
