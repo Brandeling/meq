@@ -37,27 +37,33 @@ class MeasurementContractTests(unittest.TestCase):
         )
         self.store = TranscriptStore(self.claude, self.codex)
 
+    def assert_contract(self, result, expected):
+        self.assertEqual(result["meq"], expected["meq"])
+        weighted = 0
+        for model, counters in expected["models"].items():
+            actual = dict(result["modellen"][model])
+            self.assertEqual(actual.pop("meq"), expected["meq"])
+            self.assertEqual(actual, counters)
+            weighted += sum(
+                counters[field] * weight
+                for field, weight in CONTRACT["weights"].items()
+                if field != "calls"
+            )
+        self.assertEqual(weighted, expected["weighted_tokens"])
+
     def test_claude_fixture_matches_normalized_contract(self):
         result = measure_session(CLAUDE_SID, store=self.store)
         expected = CONTRACT["fixtures"]["claude"]
 
         self.assertEqual(result["agent"], "claude")
-        self.assertEqual(result["meq"], expected["meq"])
-        for model, counters in expected["models"].items():
-            actual = dict(result["modellen"][model])
-            self.assertEqual(actual.pop("meq"), expected["meq"])
-            self.assertEqual(actual, counters)
+        self.assert_contract(result, expected)
 
     def test_codex_fixture_matches_the_same_normalized_contract(self):
         result = measure_session(CODEX_SID, store=self.store)
         expected = CONTRACT["fixtures"]["codex"]
 
         self.assertEqual(result["agent"], "codex")
-        self.assertEqual(result["meq"], expected["meq"])
-        for model, counters in expected["models"].items():
-            actual = dict(result["modellen"][model])
-            self.assertEqual(actual.pop("meq"), expected["meq"])
-            self.assertEqual(actual, counters)
+        self.assert_contract(result, expected)
         self.assertEqual(result["modellen_kort"], "gpt-5.6-terra 0,003")
 
     def test_total_is_rounded_after_raw_model_values_are_summed(self):
