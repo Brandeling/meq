@@ -112,8 +112,10 @@ the public core about a particular tracker or accounting system.
 ## Contract fixtures
 
 The files in `tests/fixtures` are intentionally small, stable examples of the external
-Claude and Codex transcript formats. Other readers can consume the same fixtures and the
-expected normalized counters to detect drift without sharing an implementation.
+Claude and Codex transcript formats. `contract.json` is the versioned, language-neutral
+manifest of their expected normalized counters, weighted totals, and display-level Meq.
+Other readers should consume the transcript and manifest files directly so a format or
+formula change breaks every consumer's contract test instead of drifting silently.
 
 ## Tests
 

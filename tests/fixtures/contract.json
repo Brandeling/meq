@@ -1,0 +1,45 @@
+{
+  "schema": "meq-transcript-contract-v1",
+  "weights": {
+    "input_tokens": 1.0,
+    "output_tokens": 5.0,
+    "cache_write_tokens": 1.25,
+    "cached_input_tokens": 0.1
+  },
+  "fixtures": {
+    "claude": {
+      "file": "claude.jsonl",
+      "session": "11111111-1111-1111-1111-111111111111",
+      "first_timestamp": "2026-09-01T10:00:00Z",
+      "last_context_tokens": 1000,
+      "weighted_tokens": 2600,
+      "meq": 0.003,
+      "models": {
+        "claude-opus-5": {
+          "calls": 2,
+          "input_tokens": 1500,
+          "cached_input_tokens": 1000,
+          "cache_write_tokens": 200,
+          "output_tokens": 150
+        }
+      }
+    },
+    "codex": {
+      "file": "codex.jsonl",
+      "session": "22222222-2222-2222-2222-222222222222",
+      "first_timestamp": "2026-09-01T10:00:00Z",
+      "last_context_tokens": 700,
+      "weighted_tokens": 2570,
+      "meq": 0.003,
+      "models": {
+        "gpt-5.6-terra": {
+          "calls": 2,
+          "input_tokens": 1500,
+          "cached_input_tokens": 700,
+          "cache_write_tokens": 200,
+          "output_tokens": 150
+        }
+      }
+    }
+  }
+}

@@ -14,8 +14,9 @@ from meq.measurement import (
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
-CLAUDE_SID = "11111111-1111-1111-1111-111111111111"
-CODEX_SID = "22222222-2222-2222-2222-222222222222"
+CONTRACT = json.loads((FIXTURES / "contract.json").read_text())
+CLAUDE_SID = CONTRACT["fixtures"]["claude"]["session"]
+CODEX_SID = CONTRACT["fixtures"]["codex"]["session"]
 
 
 class MeasurementContractTests(unittest.TestCase):
@@ -38,29 +39,25 @@ class MeasurementContractTests(unittest.TestCase):
 
     def test_claude_fixture_matches_normalized_contract(self):
         result = measure_session(CLAUDE_SID, store=self.store)
+        expected = CONTRACT["fixtures"]["claude"]
 
         self.assertEqual(result["agent"], "claude")
-        self.assertEqual(result["modellen"]["claude-opus-5"], {
-            "meq": 0.003,
-            "calls": 2,
-            "input_tokens": 1500,
-            "cached_input_tokens": 1000,
-            "cache_write_tokens": 200,
-            "output_tokens": 150,
-        })
+        self.assertEqual(result["meq"], expected["meq"])
+        for model, counters in expected["models"].items():
+            actual = dict(result["modellen"][model])
+            self.assertEqual(actual.pop("meq"), expected["meq"])
+            self.assertEqual(actual, counters)
 
     def test_codex_fixture_matches_the_same_normalized_contract(self):
         result = measure_session(CODEX_SID, store=self.store)
+        expected = CONTRACT["fixtures"]["codex"]
 
         self.assertEqual(result["agent"], "codex")
-        self.assertEqual(result["modellen"]["gpt-5.6-terra"], {
-            "meq": 0.003,
-            "calls": 2,
-            "input_tokens": 1500,
-            "cached_input_tokens": 700,
-            "cache_write_tokens": 200,
-            "output_tokens": 150,
-        })
+        self.assertEqual(result["meq"], expected["meq"])
+        for model, counters in expected["models"].items():
+            actual = dict(result["modellen"][model])
+            self.assertEqual(actual.pop("meq"), expected["meq"])
+            self.assertEqual(actual, counters)
         self.assertEqual(result["modellen_kort"], "gpt-5.6-terra 0,003")
 
     def test_total_is_rounded_after_raw_model_values_are_summed(self):
