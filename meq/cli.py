@@ -68,6 +68,11 @@ def build_parser() -> argparse.ArgumentParser:
     apply.add_argument("proposal", type=Path)
     apply.add_argument("--approve", required=True)
     apply.add_argument("--sink", action="append", default=[], required=True)
+    apply.add_argument(
+        "--without-measurement",
+        action="store_true",
+        help="apply an allocation-only proposal without reading a transcript",
+    )
     return parser
 
 
@@ -109,8 +114,9 @@ def _run_modern(arguments: list[str], store: TranscriptStore) -> None:
     payload = {
         "schema": "meq-sink-v1",
         "proposal": proposal.as_dict(),
-        "measurement": measure_session(proposal.session, store=store),
     }
+    if not args.without_measurement:
+        payload["measurement"] = measure_session(proposal.session, store=store)
     encoded = json.dumps(payload, ensure_ascii=False) + "\n"
     for sink in args.sink:
         completed = subprocess.run(
