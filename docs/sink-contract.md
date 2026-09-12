@@ -33,7 +33,11 @@ Important properties:
   finite, non-negative normalized decimals and total 1.0, with an inclusive 0.001 margin
   for human-entered percentages (0.999 through 1.001).
 - `apply` rejects a changed or incorrectly approved proposal before invoking any sink.
-- The measurement is made at apply time, so the approval conversation is included.
+- By default the measurement is made at apply time, so the approval conversation is
+  included.
+- `--without-measurement` is an explicit allocation-only mode for a quantity supplied by
+  a human or another authoritative source. Its document omits `measurement`; a sink must
+  reject that form when its own contract requires measured agent usage.
 - Idempotence belongs to the sink. A useful key is `(session, approval_id, reference)`.
 - A sink that receives the document but cannot durably write every allocation must return
   non-zero. `meq` then stops and does not call later sinks.

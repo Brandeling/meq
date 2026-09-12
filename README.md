@@ -16,7 +16,7 @@ price model later.
 
 ## Install
 
-The project has no runtime dependencies beyond Python 3.9 or newer.
+The project has no runtime dependencies beyond Python 3.10 or newer.
 
 ```sh
 python3 -m pip install .
@@ -73,6 +73,41 @@ meq apply proposal.json --approve <approval-id> \
 document to each sink on standard input. A sink is any executable that accepts the
 [documented payload](docs/sink-contract.md). Measurement and allocation therefore stay
 shareable while Jira, accounting, or a plain file remain replaceable adapters.
+
+An allocation can also describe a human-supplied quantity that is independent of the
+agent transcript. In that case, keep the same approved proposal and opt out explicitly:
+
+```sh
+meq apply proposal.json --approve <approval-id> \
+  --without-measurement --sink ./write-human-time
+```
+
+The resulting sink document intentionally has no `measurement` member. This is not a
+fallback for a missing transcript: sinks that book agent usage should require the normal
+measured form.
+
+## Human close-out workflow
+
+The proposal transaction is only the mechanical boundary. A useful close-out round also
+needs a human decision about what the session was for:
+
+1. **Land loose ends first.** Put each decision, follow-up, or unfinished change in an
+   issue, feature record, or document. A chat transcript is not the durable home for it.
+2. **Inspect the facts.** Measure the session and use `meq recent` to find sessions that
+   may have been left open. The time between first and last message is context, not an
+   automatic claim about human hours.
+3. **Propose an allocation.** Prefer the concrete issue. If no issue fits, use a specific
+   feature. Use a category only when neither is honest. If categories take most of the
+   allocation, check the work again before accepting the shortcut.
+4. **Distinguish legitimate from lazy categorization.** “No issue belongs here” is a
+   legitimate category, for example general maintenance of the process itself. “Nobody
+   created the issue” is not: create the issue and allocate to it.
+5. **Ask for explicit approval.** Show the references, percentages, and reasons to a
+   person who can judge the work. Only apply the exact approval id after that person has
+   agreed. If the proposal changes, generate a new id and ask again.
+
+This order keeps the human judgment shareable alongside the measurement without teaching
+the public core about a particular tracker or accounting system.
 
 ## Contract fixtures
 

@@ -162,6 +162,25 @@ class ApprovalRoundTests(unittest.TestCase):
         self.assertIn("expected 100%", applied.stderr)
         self.assertFalse(self.sink_log.exists())
 
+    def test_allocation_only_apply_does_not_require_a_transcript(self):
+        missing_session = "55555555-5555-5555-5555-555555555555"
+        proposed = self.run_meq(
+            "propose", missing_session, "ISSUE-1=100",
+            "--output", str(self.proposal),
+        )
+        self.assertEqual(proposed.returncode, 0, proposed.stderr)
+        approval = json.loads(self.proposal.read_text())["approval_id"]
+
+        applied = self.run_meq(
+            "apply", str(self.proposal), "--approve", approval,
+            "--without-measurement", "--sink", str(self.sink),
+        )
+
+        self.assertEqual(applied.returncode, 0, applied.stderr)
+        payload = json.loads(self.sink_log.read_text())
+        self.assertEqual(payload["proposal"]["session"], missing_session)
+        self.assertNotIn("measurement", payload)
+
 
 if __name__ == "__main__":
     unittest.main()
