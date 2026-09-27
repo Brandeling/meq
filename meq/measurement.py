@@ -1,4 +1,4 @@
-"""Normalize persisted Claude Code and Codex token usage."""
+"""Normalize persisted Claude Code and Codex token usage, and locate Cursor transcripts."""
 
 from __future__ import annotations
 
@@ -26,6 +26,15 @@ class MeasurementError(ValueError):
     """Raised when a session cannot be located or measured unambiguously."""
 
 
+class MissingUsageError(MeasurementError):
+    """Raised when a transcript was found but persists no token counters.
+
+    This is a separate type so an integration can tell "we found the session and it
+    cannot be measured" apart from "there is no such session", and never reports the
+    former as a zero measurement.
+    """
+
+
 @dataclass(frozen=True)
 class SessionLocation:
     agent: str
@@ -43,6 +52,8 @@ class SessionLocation:
 class TranscriptStore:
     claude_projects: Path
     codex_sessions: Path
+    # Optional so existing two-root callers keep their exact search space.
+    cursor_projects: Optional[Path] = None
 
     @classmethod
     def from_environment(cls) -> "TranscriptStore":
@@ -57,7 +68,12 @@ class TranscriptStore:
             or os.environ.get("PLEMP_CODEX_SESSIONS")
             or "~/.codex/sessions"
         )
-        return cls(Path(claude).expanduser(), Path(codex).expanduser())
+        cursor = os.environ.get("MEQ_CURSOR_PROJECTS") or "~/.cursor/projects"
+        return cls(
+            Path(claude).expanduser(),
+            Path(codex).expanduser(),
+            Path(cursor).expanduser(),
+        )
 
     def project_dir(self, workdir: os.PathLike | str) -> Path:
         escaped = re.sub(r"[/.]", "-", str(Path(workdir).resolve()))
@@ -70,11 +86,12 @@ class TranscriptStore:
         workdir: Optional[os.PathLike | str] = None,
         project_dir: Optional[os.PathLike | str] = None,
     ) -> SessionLocation:
-        """Find exactly one persisted transcript across both supported agents.
+        """Find exactly one persisted transcript across the supported agents.
 
         An explicit Claude project is authoritative. Without one, all Claude project
-        directories and the Codex rollout tree are searched. Ambiguity is reported
-        instead of selecting a transcript and silently dropping another one.
+        directories, the Codex rollout tree and the Cursor agent-transcript tree are
+        searched. Ambiguity is reported instead of selecting a transcript and silently
+        dropping another one.
         """
         explicit = Path(project_dir) if project_dir else (
             self.project_dir(workdir) if workdir is not None else None
@@ -95,9 +112,22 @@ class TranscriptStore:
                 recursive=True,
             )
         ]
+        # Cursor keeps one directory per conversation, with the top-level transcript
+        # named after it and subagent transcripts in a `subagents/` directory beside it.
+        cursor_matches = [] if self.cursor_projects is None else [
+            Path(path)
+            for path in glob.glob(
+                str(
+                    self.cursor_projects / "*" / "agent-transcripts" / session_id
+                    / f"{session_id}.jsonl"
+                )
+            )
+        ]
         matches = [
             SessionLocation("claude", path, path.parent) for path in claude_matches
-        ] + [SessionLocation("codex", path) for path in codex_matches]
+        ] + [SessionLocation("codex", path) for path in codex_matches] + [
+            SessionLocation("cursor", path) for path in cursor_matches
+        ]
         if not matches:
             raise MeasurementError(f"no transcript for session {session_id}")
         if len(matches) > 1:
@@ -234,6 +264,34 @@ def measure_codex(location: SessionLocation, session_id: str) -> dict:
     return _result("codex", session_id, per_model)
 
 
+def measure_cursor(location: SessionLocation, session_id: str) -> dict:
+    """Refuse to measure a Cursor transcript instead of reporting zero usage.
+
+    Cursor agent transcripts persist the conversation (roles, text and tool calls) but
+    no model name and no token counters. A transcript without counters is not a session
+    that cost nothing, so this raises until a store that does persist usage is supported.
+    """
+    with location.path.open(errors="ignore") as handle:
+        for line in handle:
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            message = record.get("message") if isinstance(record, dict) else None
+            if isinstance(record, dict) and (
+                "usage" in record
+                or (isinstance(message, dict) and "usage" in message)
+            ):
+                raise MeasurementError(
+                    f"Cursor transcript {location.path} contains usage in an unknown "
+                    "format; refusing to guess its token counters"
+                )
+    raise MissingUsageError(
+        f"no token usage in Cursor transcript {location.path}: Cursor does not "
+        "persist token counters in agent transcripts"
+    )
+
+
 def measure_session(
     session_id: str,
     *,
@@ -245,6 +303,8 @@ def measure_session(
     location = store.locate(session_id, workdir=workdir, project_dir=project_dir)
     if location.agent == "claude":
         return measure_claude(location, session_id)
+    if location.agent == "cursor":
+        return measure_cursor(location, session_id)
     return measure_codex(location, session_id)
 
 
@@ -323,7 +383,10 @@ def recent_sessions(
     minimum_meq: float = 0.0,
     store: Optional[TranscriptStore] = None,
 ) -> list[dict]:
-    """Measure recent top-level transcripts from both supported agents.
+    """Measure recent top-level Claude and Codex transcripts.
+
+    Cursor transcripts are not listed: they persist no token counters, so an inventory
+    entry for one could only be a fabricated zero.
 
     This is deliberately a transcript inventory, not a statement about whether usage
     was booked. Duplicate rollout files for the same Codex id collapse to the newest

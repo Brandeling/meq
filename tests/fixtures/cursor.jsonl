@@ -1,0 +1,4 @@
+{"role":"user","message":{"content":[{"type":"text","text":"<user_query>\nSummarize the README.\n</user_query>"}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"Reading it first."},{"type":"tool_use","name":"ReadFile","input":{"path":"README.md"}}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"The README describes a small command-line tool."}]}}
+{"type":"turn_ended","status":"success"}

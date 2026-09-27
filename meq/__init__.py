@@ -3,6 +3,7 @@
 from .allocation import Allocation, Proposal, parse_allocations, validate_allocations
 from .measurement import (
     MeasurementError,
+    MissingUsageError,
     TranscriptStore,
     combine,
     measure_session,
@@ -11,6 +12,7 @@ from .measurement import (
 __all__ = [
     "Allocation",
     "MeasurementError",
+    "MissingUsageError",
     "Proposal",
     "TranscriptStore",
     "combine",
