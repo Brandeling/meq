@@ -30,8 +30,8 @@ During development, the executable wrapper can be run directly:
 
 ## Measure a session
 
-Session discovery is agent-independent. A UUID is looked up in both the Claude project
-store and the Codex rollout store:
+Session discovery is agent-independent. A UUID is looked up in the Claude project store,
+the Codex rollout store and the Cursor agent-transcript store:
 
 ```sh
 meq measure 01a08faa-edf2-7893-9f98-75ebb6aae208
@@ -48,8 +48,18 @@ meq --log /path/to/batch.log
 ```
 
 Override the transcript roots in tests or non-standard installations with
-`MEQ_CLAUDE_PROJECTS` and `MEQ_CODEX_SESSIONS`. The historical
+`MEQ_CLAUDE_PROJECTS`, `MEQ_CODEX_SESSIONS` and `MEQ_CURSOR_PROJECTS`. The historical
 `PLEMP_CLAUDE_PROJECTS` and `PLEMP_CODEX_SESSIONS` names are accepted as fallbacks.
+
+### Cursor
+
+Cursor stores one transcript per conversation at
+`~/.cursor/projects/<project>/agent-transcripts/<uuid>/<uuid>.jsonl`. Inside the agent,
+Cursor exports the conversation id as `CURSOR_CONVERSATION_ID`. `meq locate` finds these
+transcripts, but they persist no model name and no token counters, so `meq measure`
+fails with `no token usage in Cursor transcript` instead of reporting zero. An integration
+can catch `MissingUsageError` to tell that apart from a session that does not exist, and
+book human time with an allocation-only proposal (below) instead.
 
 ## Propose, approve, then write
 
@@ -112,7 +122,8 @@ the public core about a particular tracker or accounting system.
 ## Contract fixtures
 
 The files in `tests/fixtures` are intentionally small, stable examples of the external
-Claude and Codex transcript formats. `contract.json` is the versioned, language-neutral
+Claude and Codex transcript formats. `cursor.jsonl` is a synthetic example of the
+Cursor agent-transcript shape; it is not in the manifest because it has no counters. `contract.json` is the versioned, language-neutral
 manifest of their expected normalized counters, weighted totals, and display-level Meq.
 Other readers should consume the transcript and manifest files directly so a format or
 formula change breaks every consumer's contract test instead of drifting silently.

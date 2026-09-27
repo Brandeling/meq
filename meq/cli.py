@@ -52,7 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
     measure.add_argument("--workdir")
     measure.add_argument("--project-dir")
 
-    locate = commands.add_parser("locate", help="locate a Claude or Codex transcript")
+    locate = commands.add_parser("locate", help="locate a Claude, Codex or Cursor transcript")
     locate.add_argument("session")
 
     recent = commands.add_parser("recent", help="list recently modified measured sessions")
