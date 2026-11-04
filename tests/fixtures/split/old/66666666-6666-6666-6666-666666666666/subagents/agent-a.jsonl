@@ -1,0 +1,1 @@
+{"uuid": "s-a", "timestamp": "2026-10-18T06:33:00Z", "type": "assistant", "message": {"id": "msg_a", "model": "claude-sonnet-5", "usage": {"input_tokens": 10000, "output_tokens": 0, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}}}

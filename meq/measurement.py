@@ -40,12 +40,39 @@ class SessionLocation:
     agent: str
     path: Path
     project_dir: Optional[Path] = None
+    # Further Claude transcripts of the same session in other project directories.
+    # A session that changes its working directory is persisted under both.
+    other_paths: Tuple[Path, ...] = ()
+
+    @property
+    def paths(self) -> Tuple[Path, ...]:
+        return (self.path, *self.other_paths)
+
+    @property
+    def project_dirs(self) -> Tuple[Path, ...]:
+        if self.project_dir is None:
+            return ()
+        return (self.project_dir, *(path.parent for path in self.other_paths))
 
     def as_dict(self) -> dict:
-        result = {"agent": self.agent, "path": str(self.path)}
+        result = {
+            "agent": self.agent,
+            "path": str(self.path),
+            "paths": [str(path) for path in self.paths],
+        }
         if self.project_dir is not None:
             result["project_dir"] = str(self.project_dir)
+            result["project_dirs"] = [str(path) for path in self.project_dirs]
         return result
+
+
+def _claude_location(paths: Iterable[Path]) -> SessionLocation:
+    """One location for every Claude transcript of a session, largest first.
+
+    The largest transcript is the most complete one, so it is the primary `path`.
+    """
+    ordered = sorted(paths, key=lambda path: (-path.stat().st_size, str(path)))
+    return SessionLocation("claude", ordered[0], ordered[0].parent, tuple(ordered[1:]))
 
 
 @dataclass(frozen=True)
@@ -86,12 +113,14 @@ class TranscriptStore:
         workdir: Optional[os.PathLike | str] = None,
         project_dir: Optional[os.PathLike | str] = None,
     ) -> SessionLocation:
-        """Find exactly one persisted transcript across the supported agents.
+        """Find the persisted transcript of a session across the supported agents.
 
         An explicit Claude project is authoritative. Without one, all Claude project
         directories, the Codex rollout tree and the Cursor agent-transcript tree are
-        searched. Ambiguity is reported instead of selecting a transcript and silently
-        dropping another one.
+        searched. Several Claude transcripts with the same id are one session that
+        changed its working directory; they are returned together. Any other ambiguity,
+        including the same id under different agents, is reported instead of selecting
+        a transcript and silently dropping another one.
         """
         explicit = Path(project_dir) if project_dir else (
             self.project_dir(workdir) if workdir is not None else None
@@ -123,17 +152,18 @@ class TranscriptStore:
                 )
             )
         ]
-        matches = [
-            SessionLocation("claude", path, path.parent) for path in claude_matches
-        ] + [SessionLocation("codex", path) for path in codex_matches] + [
+        matches = (
+            [_claude_location(claude_matches)] if claude_matches else []
+        ) + [SessionLocation("codex", path) for path in codex_matches] + [
             SessionLocation("cursor", path) for path in cursor_matches
         ]
         if not matches:
             raise MeasurementError(f"no transcript for session {session_id}")
         if len(matches) > 1:
-            paths = ", ".join(str(match.path) for match in matches)
+            paths = ", ".join(str(path) for match in matches for path in match.paths)
             raise MeasurementError(
-                f"session {session_id} has {len(matches)} transcripts: {paths}"
+                f"session {session_id} has "
+                f"{sum(len(match.paths) for match in matches)} transcripts: {paths}"
             )
         return matches[0]
 
@@ -162,8 +192,25 @@ def _short(models: dict) -> str:
     return ", ".join(parts)
 
 
-def _tally_claude(path: Path) -> dict:
+def _usage_key(record: dict, line: str) -> str:
+    """Identify an API message across copies of the same transcript."""
+    message = record.get("message") or {}
+    if message.get("id"):
+        return f"message:{message['id']}"
+    if record.get("uuid"):
+        return f"uuid:{record['uuid']}"
+    return f"line:{line.strip()}"
+
+
+def _tally_claude(path: Path, seen: Optional[set] = None) -> dict:
+    """Sum usage per model in one transcript.
+
+    `seen` holds the keys of messages already counted from another transcript of the
+    same session; those are skipped. Within one transcript every line is counted as
+    before, so a single transcript measures exactly as it always did.
+    """
     per_model = defaultdict(_empty_slot)
+    counted = set()
     with path.open(errors="ignore") as handle:
         for line in handle:
             try:
@@ -174,6 +221,11 @@ def _tally_claude(path: Path) -> dict:
             usage = message.get("usage")
             if not isinstance(usage, dict):
                 continue
+            if seen is not None:
+                key = _usage_key(record, line)
+                if key in seen:
+                    continue
+                counted.add(key)
             model = message.get("model") or record.get("model") or "unknown"
             slot = per_model[model]
             slot["inp"] += usage.get("input_tokens", 0) or 0
@@ -181,6 +233,8 @@ def _tally_claude(path: Path) -> dict:
             slot["cw"] += usage.get("cache_creation_input_tokens", 0) or 0
             slot["cr"] += usage.get("cache_read_input_tokens", 0) or 0
             slot["calls"] += 1
+    if seen is not None:
+        seen |= counted
     return per_model
 
 
@@ -205,19 +259,32 @@ def _result(agent: str, session_id: str, per_model: dict, *, subagents: int = 0,
 
 
 def measure_claude(location: SessionLocation, session_id: str) -> dict:
-    project_dir = location.project_dir or location.path.parent
-    subagent_paths = sorted(
-        (project_dir / session_id / "subagents").glob("*.jsonl")
-    )
+    """Measure a Claude session, which may be split over several project directories.
+
+    Main transcripts count each API message once across all copies. Subagents are the
+    union of the `subagents/` directories by file name; when one name occurs in more
+    than one directory, the largest file is measured.
+    """
+    project_dirs = location.project_dirs or (location.path.parent,)
+    subagents: dict[str, Path] = {}
+    for project_dir in project_dirs:
+        for path in (project_dir / session_id / "subagents").glob("*.jsonl"):
+            previous = subagents.get(path.name)
+            if previous is None or path.stat().st_size > previous.stat().st_size:
+                subagents[path.name] = path
+    subagent_paths = [subagents[name] for name in sorted(subagents)]
     per_model = defaultdict(_empty_slot)
     main_meq = subagent_meq = 0.0
-    for index, path in enumerate([location.path, *subagent_paths]):
+    seen: Optional[set] = set() if location.other_paths else None
+    for path in location.paths:
+        found = _tally_claude(path, seen)
+        main_meq += sum(_meq(slot) for slot in found.values())
+        for model, slot in found.items():
+            for key, value in slot.items():
+                per_model[model][key] += value
+    for path in subagent_paths:
         found = _tally_claude(path)
-        total = sum(_meq(slot) for slot in found.values())
-        if index == 0:
-            main_meq += total
-        else:
-            subagent_meq += total
+        subagent_meq += sum(_meq(slot) for slot in found.values())
         for model, slot in found.items():
             for key, value in slot.items():
                 per_model[model][key] += value
@@ -397,11 +464,12 @@ def recent_sessions(
     store = store or TranscriptStore.from_environment()
     cutoff = time.time() - days * 86400
     candidates: dict[tuple[str, str], SessionLocation] = {}
+    claude_paths: dict[str, list[Path]] = defaultdict(list)
     for path in store.claude_projects.glob("*/*.jsonl"):
-        if path.stat().st_mtime >= cutoff:
-            candidates[("claude", path.stem)] = SessionLocation(
-                "claude", path, path.parent
-            )
+        claude_paths[path.stem].append(path)
+    for session_id, paths in claude_paths.items():
+        if any(path.stat().st_mtime >= cutoff for path in paths):
+            candidates[("claude", session_id)] = _claude_location(paths)
     codex_pattern = re.compile(
         r"rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$"
     )
