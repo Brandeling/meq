@@ -39,6 +39,14 @@ meq locate 01a08faa-edf2-7893-9f98-75ebb6aae208
 meq recent --days 7 --minimum 0.1
 ```
 
+A Claude Code session that changes its working directory is persisted under two project
+directories. `meq` measures those transcripts as one session: each API message counts once
+(by `message.id`), and the subagents are the union of both `subagents/` directories.
+`meq locate` lists every transcript in `paths` and `project_dirs`; `path` and
+`project_dir` name the most complete one. `--project-dir` still measures exactly that one
+directory. The same id under two different agents (for example Claude and Codex) remains
+an error.
+
 The old batch-oriented invocation remains available for small integrations:
 
 ```sh
@@ -123,7 +131,7 @@ the public core about a particular tracker or accounting system.
 
 The files in `tests/fixtures` are intentionally small, stable examples of the external
 Claude and Codex transcript formats. `cursor.jsonl` is a synthetic example of the
-Cursor agent-transcript shape; it is not in the manifest because it has no counters. `contract.json` is the versioned, language-neutral
+Cursor agent-transcript shape; it is not in the manifest because it has no counters. `split/` is one Claude session persisted under an old and a new project directory. `contract.json` is the versioned, language-neutral
 manifest of their expected normalized counters, weighted totals, and display-level Meq.
 Other readers should consume the transcript and manifest files directly so a format or
 formula change breaks every consumer's contract test instead of drifting silently.

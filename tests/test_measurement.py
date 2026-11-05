@@ -22,6 +22,7 @@ CLAUDE_SID = CONTRACT["fixtures"]["claude"]["session"]
 CODEX_SID = CONTRACT["fixtures"]["codex"]["session"]
 CURSOR_SID = "33333333-3333-3333-3333-333333333333"
 CURSOR_SUBAGENT_SID = "55555555-5555-5555-5555-555555555555"
+SPLIT_SID = "66666666-6666-6666-6666-666666666666"
 ENTRYPOINT = Path(__file__).parents[1] / "meq.py"
 
 
@@ -96,13 +97,16 @@ class MeasurementContractTests(unittest.TestCase):
         self.assertEqual(result["meq"], 0.001)
         self.assertEqual(result["meq_hoofdsessie"], 0.001)
 
-    def test_global_lookup_rejects_duplicate_session_ids(self):
+    def test_identical_claude_transcripts_in_two_projects_count_once(self):
         duplicate = self.claude / "-other" / f"{CLAUDE_SID}.jsonl"
         duplicate.parent.mkdir()
         shutil.copy(FIXTURES / "claude.jsonl", duplicate)
 
-        with self.assertRaisesRegex(MeasurementError, "2 transcripts"):
-            self.store.locate(CLAUDE_SID)
+        location = self.store.locate(CLAUDE_SID)
+        result = measure_session(CLAUDE_SID, store=self.store)
+
+        self.assertEqual(len(location.paths), 2)
+        self.assert_contract(result, CONTRACT["fixtures"]["claude"])
 
     def test_explicit_project_disambiguates_claude(self):
         project = self.claude / "-tmp-project"
@@ -198,6 +202,129 @@ class MeasurementContractTests(unittest.TestCase):
             {item["measurement"]["session"] for item in results},
             {CLAUDE_SID, CODEX_SID},
         )
+
+
+class SplitClaudeSessionTests(unittest.TestCase):
+    """A Claude session that changed its working directory (meq#3).
+
+    `old` holds a prefix of the main transcript and subagent `agent-a`; `new` holds the
+    full transcript and subagents `agent-b` and `agent-c`.
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        root = Path(self.temp.name)
+        self.claude = root / "claude"
+        self.codex = root / "codex"
+        self.cursor = root / "cursor"
+        self.old = self.claude / "-home-user-plemp"
+        self.new = self.claude / "-home-user"
+        shutil.copytree(FIXTURES / "split" / "old", self.old)
+        shutil.copytree(FIXTURES / "split" / "new", self.new)
+        self.codex.mkdir()
+        self.store = TranscriptStore(self.claude, self.codex, self.cursor)
+
+    def test_split_session_measures_as_the_union(self):
+        result = measure_session(SPLIT_SID, store=self.store)
+
+        # Main: msg_01..03 once each (10,000 weighted tokens); the prefix in `old`
+        # adds nothing. Subagents: agent-a from `old`, agent-b and agent-c from `new`.
+        self.assertEqual(result["meq_hoofdsessie"], 0.01)
+        self.assertEqual(result["meq_subagents"], 0.06)
+        self.assertEqual(result["meq"], 0.07)
+        self.assertEqual(result["subagents"], 3)
+        self.assertEqual(result["modellen"]["claude-opus-5"]["calls"], 3)
+        self.assertEqual(result["modellen"]["claude-opus-5"]["input_tokens"], 6000)
+        self.assertEqual(result["modellen"]["claude-opus-5"]["output_tokens"], 800)
+        self.assertEqual(result["modellen"]["claude-sonnet-5"]["calls"], 3)
+        self.assertEqual(result["modellen"]["claude-sonnet-5"]["input_tokens"], 60000)
+
+    def test_locate_returns_every_path_with_the_fullest_first(self):
+        location = self.store.locate(SPLIT_SID)
+
+        self.assertEqual(location.agent, "claude")
+        self.assertEqual(location.path, self.new / f"{SPLIT_SID}.jsonl")
+        self.assertEqual(
+            location.paths,
+            (self.new / f"{SPLIT_SID}.jsonl", self.old / f"{SPLIT_SID}.jsonl"),
+        )
+        self.assertEqual(location.project_dirs, (self.new, self.old))
+
+    def test_explicit_project_dir_measures_exactly_that_directory(self):
+        old = measure_session(SPLIT_SID, store=self.store, project_dir=self.old)
+        new = measure_session(SPLIT_SID, store=self.store, project_dir=self.new)
+
+        self.assertEqual(self.store.locate(SPLIT_SID, project_dir=self.old).paths,
+                         (self.old / f"{SPLIT_SID}.jsonl",))
+        self.assertEqual(
+            (old["meq_hoofdsessie"], old["meq_subagents"], old["subagents"]),
+            (0.005, 0.01, 1),
+        )
+        self.assertEqual(
+            (new["meq_hoofdsessie"], new["meq_subagents"], new["subagents"]),
+            (0.01, 0.05, 2),
+        )
+
+    def test_split_claude_session_and_codex_with_the_same_id_refuse(self):
+        rollout = self.codex / "2026" / "10" / "31"
+        rollout.mkdir(parents=True)
+        shutil.copy(
+            FIXTURES / "codex.jsonl",
+            rollout / f"rollout-2026-10-31T10-00-00-{SPLIT_SID}.jsonl",
+        )
+
+        with self.assertRaisesRegex(MeasurementError, "3 transcripts"):
+            self.store.locate(SPLIT_SID)
+        with self.assertRaises(MeasurementError):
+            measure_session(SPLIT_SID, store=self.store)
+
+    def test_split_claude_session_and_cursor_with_the_same_id_refuse(self):
+        conversation = self.cursor / "tmp-project" / "agent-transcripts" / SPLIT_SID
+        conversation.mkdir(parents=True)
+        shutil.copy(FIXTURES / "cursor.jsonl", conversation / f"{SPLIT_SID}.jsonl")
+
+        with self.assertRaisesRegex(MeasurementError, "3 transcripts"):
+            self.store.locate(SPLIT_SID)
+
+    def test_recent_inventory_lists_a_split_session_once(self):
+        results = recent_sessions(7, store=self.store)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["measurement"]["meq"], 0.07)
+        self.assertEqual(len(results[0]["location"]["paths"]), 2)
+
+    def test_cli_locate_and_measure_keep_their_fields(self):
+        environment = {
+            **os.environ,
+            "MEQ_CLAUDE_PROJECTS": str(self.claude),
+            "MEQ_CODEX_SESSIONS": str(self.codex),
+            "MEQ_CURSOR_PROJECTS": str(self.cursor),
+        }
+
+        def run(*arguments):
+            completed = subprocess.run(
+                [sys.executable, str(ENTRYPOINT), *arguments],
+                capture_output=True, text=True, env=environment, check=False,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            return json.loads(completed.stdout)
+
+        located = run("locate", SPLIT_SID)
+        measured = run("measure", SPLIT_SID)
+        only_new = run("measure", SPLIT_SID, "--project-dir", str(self.new))
+
+        self.assertEqual(located["path"], str(self.new / f"{SPLIT_SID}.jsonl"))
+        self.assertEqual(located["project_dir"], str(self.new))
+        self.assertEqual(len(located["paths"]), 2)
+        self.assertEqual(located["project_dirs"], [str(self.new), str(self.old)])
+        for field in ("meq", "modellen", "modellen_kort", "agents", "sessions",
+                      "subagents", "meq_subagents"):
+            self.assertIn(field, measured)
+        self.assertEqual(measured["meq"], 0.07)
+        self.assertEqual(measured["subagents"], 3)
+        self.assertEqual(only_new["meq"], 0.06)
+        self.assertEqual(only_new["subagents"], 2)
 
 
 if __name__ == "__main__":
