@@ -181,6 +181,78 @@ class ApprovalRoundTests(unittest.TestCase):
         self.assertEqual(payload["proposal"]["session"], missing_session)
         self.assertNotIn("measurement", payload)
 
+    def test_apply_passes_frozen_measurement_unchanged_without_reading_transcripts(self):
+        proposal = Proposal.create(self.sid, parse_allocations(["ISSUE-1=100"]))
+        proposal.write(self.proposal)
+        measurement = {
+            "session": self.sid, "meq": 1.23456789012345,
+            "modellen": {"frozen-model": {"input_tokens": 1234567, "out": 89}},
+            "modellen_kort": "frozen-model 1,23456789012345", "agents": ["claude"],
+            "extra": {"note": "ongewijzigd vóór akkoord", "values": [None, True, 0]},
+        }
+        path = self.root / "measurement.json"
+        path.write_text(json.dumps(measurement))
+        for available in (False, True):
+            with self.subTest(transcript_available=available):
+                self.environment["MEQ_CLAUDE_PROJECTS"] = str(
+                    self.root / ("claude" if available else "empty-claude"))
+                self.environment["PLEMP_CLAUDE_PROJECTS"] = str(self.root / "empty-claude")
+                applied = self.run_meq(
+                    "apply", str(self.proposal), "--approve", proposal.approval_id,
+                    "--measurement", str(path), "--sink", str(self.sink),
+                )
+                self.assertEqual(applied.returncode, 0, applied.stderr)
+                self.assertEqual(json.loads(self.sink_log.read_text()), {
+                    "schema": "meq-sink-v1", "proposal": proposal.as_dict(),
+                    "measurement": measurement,
+                })
+        help_result = self.run_meq("apply", "--help")
+        self.assertEqual(help_result.returncode, 0, help_result.stderr)
+        self.assertIn("--measurement", help_result.stdout)
+
+    def test_apply_rejects_invalid_or_conflicting_frozen_measurements_before_sinks(self):
+        proposal = Proposal.create(self.sid, parse_allocations(["ISSUE-1=100"]))
+        proposal.write(self.proposal)
+        path = self.root / "measurement.json"
+        for raw, extra, message in (
+            (json.dumps({"session": "other", "meq": 1}), [], "another session"),
+            ("[]", [], "JSON object"),
+            ("null", [], "JSON object"),
+            ("{", [], "cannot read measurement"),
+            (json.dumps({"meq": 1}), [], "another session"),
+            (json.dumps({"session": self.sid, "meq": 1}),
+             ["--without-measurement"], "not allowed with argument"),
+        ):
+            with self.subTest(raw=raw, extra=extra):
+                path.write_text(raw)
+                applied = self.run_meq(
+                    "apply", str(self.proposal), "--approve", proposal.approval_id,
+                    "--measurement", str(path), *extra, "--sink", str(self.sink),
+                    "--sink", str(self.root / "later-sink-must-not-run"),
+                )
+                self.assertNotEqual(applied.returncode, 0)
+                self.assertIn(message, applied.stderr)
+                self.assertFalse(self.sink_log.exists())
+
+    def test_frozen_measurement_does_not_bypass_proposal_or_approval_validation(self):
+        proposal = Proposal.create(self.sid, parse_allocations(["ISSUE-1=100"]))
+        path = self.root / "measurement.json"
+        path.write_text(json.dumps({"session": self.sid, "meq": 1}))
+        for tampered in (False, True):
+            with self.subTest(tampered=tampered):
+                data = proposal.as_dict()
+                if tampered:
+                    data["allocations"][0]["reference"] = "ISSUE-2"
+                self.proposal.write_text(json.dumps(data))
+                applied = self.run_meq(
+                    "apply", str(self.proposal), "--approve",
+                    proposal.approval_id if tampered else "wrong",
+                    "--measurement", str(path), "--sink", str(self.sink),
+                )
+                self.assertNotEqual(applied.returncode, 0)
+                self.assertIn("approval id", applied.stderr)
+                self.assertFalse(self.sink_log.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

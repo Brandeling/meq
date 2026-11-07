@@ -35,9 +35,18 @@ Important properties:
 - `apply` rejects a changed or incorrectly approved proposal before invoking any sink.
 - By default the measurement is made at apply time, so the approval conversation is
   included.
+- `--measurement <file>` applies a frozen measurement supplied by the caller: the
+  unmodified JSON object produced by `meq measure <session>`, including `session`,
+  `meq`, `modellen`, `modellen_kort` and `agents`. No transcript is read, even if one
+  is available. After the normal proposal and approval checks, `apply` requires a
+  JSON object whose `session` matches the proposal before calling any sink. It passes
+  that object as `measurement` without recalculating or rounding its contents.
+  The approval id still covers only the session and allocation, not this file;
+  the caller is responsible for the frozen measurement's provenance and integrity.
 - `--without-measurement` is an explicit allocation-only mode for a quantity supplied by
   a human or another authoritative source. Its document omits `measurement`; a sink must
   reject that form when its own contract requires measured agent usage.
+- `--measurement` and `--without-measurement` are mutually exclusive.
 - Idempotence belongs to the sink. A useful key is `(session, approval_id, reference)`.
 - A sink that receives the document but cannot durably write every allocation must return
   non-zero. `meq` then stops and does not call later sinks.
