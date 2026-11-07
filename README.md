@@ -104,6 +104,19 @@ The resulting sink document intentionally has no `measurement` member. This is n
 fallback for a missing transcript: sinks that book agent usage should require the normal
 measured form.
 
+To apply on a machine without the transcript, supply a measurement frozen earlier:
+
+```sh
+meq measure <session-id> > measurement.json
+meq apply proposal.json --approve <approval-id> \
+  --measurement measurement.json --sink ./write-to-ledger
+```
+
+This passes the measurement unchanged and does not read the transcript again. Its
+session must match the approved proposal. The caller must preserve the file's integrity;
+the approval id covers the allocation, not the measurement. This option cannot be
+combined with `--without-measurement`.
+
 ## Human close-out workflow
 
 The proposal transaction is only the mechanical boundary. A useful close-out round also

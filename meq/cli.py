@@ -68,12 +68,30 @@ def build_parser() -> argparse.ArgumentParser:
     apply.add_argument("proposal", type=Path)
     apply.add_argument("--approve", required=True)
     apply.add_argument("--sink", action="append", default=[], required=True)
-    apply.add_argument(
+    measurement = apply.add_mutually_exclusive_group()
+    measurement.add_argument(
+        "--measurement",
+        type=Path,
+        help="apply a frozen measurement JSON file without reading a transcript",
+    )
+    measurement.add_argument(
         "--without-measurement",
         action="store_true",
         help="apply an allocation-only proposal without reading a transcript",
     )
     return parser
+
+
+def _read_measurement(path: Path, session: str) -> dict:
+    try:
+        measurement = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise MeasurementError(f"cannot read measurement {path}: {error}") from error
+    if not isinstance(measurement, dict):
+        raise MeasurementError("measurement must be a JSON object")
+    if measurement.get("session") != session:
+        raise MeasurementError("measurement belongs to another session")
+    return measurement
 
 
 def _run_modern(arguments: list[str], store: TranscriptStore) -> None:
@@ -115,7 +133,9 @@ def _run_modern(arguments: list[str], store: TranscriptStore) -> None:
         "schema": "meq-sink-v1",
         "proposal": proposal.as_dict(),
     }
-    if not args.without_measurement:
+    if args.measurement is not None:
+        payload["measurement"] = _read_measurement(args.measurement, proposal.session)
+    elif not args.without_measurement:
         payload["measurement"] = measure_session(proposal.session, store=store)
     encoded = json.dumps(payload, ensure_ascii=False) + "\n"
     for sink in args.sink:
