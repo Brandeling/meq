@@ -220,8 +220,10 @@ class SplitClaudeSessionTests(unittest.TestCase):
         self.cursor = root / "cursor"
         self.old = self.claude / "-home-user-plemp"
         self.new = self.claude / "-home-user"
-        shutil.copytree(FIXTURES / "split" / "old", self.old)
-        shutil.copytree(FIXTURES / "split" / "new", self.new)
+        # shutil.copy, not copytree's default copy2: copy2 keeps the checkout's file
+        # times, so recent_sessions(7) dropped the fixtures once a checkout was a week old.
+        shutil.copytree(FIXTURES / "split" / "old", self.old, copy_function=shutil.copy)
+        shutil.copytree(FIXTURES / "split" / "new", self.new, copy_function=shutil.copy)
         self.codex.mkdir()
         self.store = TranscriptStore(self.claude, self.codex, self.cursor)
 
